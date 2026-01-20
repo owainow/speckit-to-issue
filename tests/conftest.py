@@ -138,3 +138,101 @@ def mock_gh_list_issues(mocker: Any, mock_existing_issues: list[dict[str, Any]])
         stderr="",
     )
     return mock_run
+
+
+@pytest.fixture
+def sample_spec_md(tmp_path: Path) -> Path:
+    """Create a sample spec.md file for testing."""
+    content = """# Feature Spec: Sample Feature
+
+## Feature Overview
+
+### Description
+This is a sample feature for testing.
+It provides core functionality.
+
+## User Stories
+
+### US-001: User can do something
+As a user, I want to do something so that I can achieve a goal.
+
+## Functional Requirements
+
+### FR-001: Basic functionality
+The system must provide basic functionality.
+
+### Success Criteria
+- All tests pass
+- Documentation complete
+- Performance meets targets
+
+## Non-Functional Requirements
+
+### NFR-001: Performance
+Response time under 200ms.
+"""
+    spec_file = tmp_path / "specs" / "sample-feature" / "spec.md"
+    spec_file.parent.mkdir(parents=True, exist_ok=True)
+    spec_file.write_text(content, encoding="utf-8")
+    return spec_file
+
+
+@pytest.fixture
+def sample_plan_md(tmp_path: Path) -> Path:
+    """Create a sample plan.md file for testing."""
+    content = """# Architecture & Implementation Plan
+
+## Architecture Overview
+The system follows a modular architecture with three main components:
+- API Layer
+- Business Logic
+- Data Access
+
+## Target State
+Clean, maintainable code with full test coverage.
+
+## Technical Approach
+We will use Python with FastAPI for the backend.
+
+## Key Decisions
+- Use SQLAlchemy for ORM
+- Implement caching with Redis
+- Deploy to Azure Container Apps
+"""
+    plan_file = tmp_path / "specs" / "sample-feature" / "plan.md"
+    plan_file.parent.mkdir(parents=True, exist_ok=True)
+    plan_file.write_text(content, encoding="utf-8")
+    return plan_file
+
+
+@pytest.fixture
+def sample_research_md(tmp_path: Path) -> Path:
+    """Create a sample research.md file for testing."""
+    content = """# Technical Research
+
+## Data Models
+We need three main models:
+- User: id, name, email
+- Order: id, user_id, items
+- Product: id, name, price
+
+## API Endpoints
+- GET /users
+- POST /orders
+- GET /products
+"""
+    research_file = tmp_path / "specs" / "sample-feature" / "research.md"
+    research_file.parent.mkdir(parents=True, exist_ok=True)
+    research_file.write_text(content, encoding="utf-8")
+    return research_file
+
+
+@pytest.fixture
+def sample_spec_folder(
+    sample_tasks_md: Path,
+    sample_spec_md: Path,
+    sample_plan_md: Path,
+    sample_research_md: Path,
+) -> Path:
+    """Create a complete spec folder with all files."""
+    return sample_tasks_md.parent

@@ -28,6 +28,7 @@ from .labels import ensure_labels, get_all_labels_for_tasks
 from .mapper import task_to_issue
 from .models import CreateResult, CreateSummary, SyncReport, SyncState, TaskResult, TaskSyncStatus
 from .parser import parse_tasks_file
+from .spec_reader import read_spec_context
 
 app = typer.Typer(
     name="speckit-to-issue",
@@ -87,6 +88,11 @@ def create(
         "-c",
         help="Format issues for Copilot Coding Agent",
     ),
+    no_context: bool = typer.Option(
+        False,
+        "--no-context",
+        help="Disable spec context injection (only with --assign-copilot)",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -114,6 +120,24 @@ def create(
 ) -> None:
     """Create GitHub issues from tasks.md file."""
     try:
+        # Validate flag combinations
+        if no_context and not assign_copilot:
+            error_console.print(
+                "[yellow]Warning:[/yellow] --no-context has no effect without --assign-copilot"
+            )
+
+        # Read spec context if using copilot mode
+        spec_context = None
+        if assign_copilot and not no_context:
+            spec_context = read_spec_context(tasks_file)
+            if spec_context and not spec_context.is_empty():
+                if verbose:
+                    console.print("[dim]📚 Loaded spec context for issues[/dim]")
+            else:
+                spec_context = None
+                if verbose:
+                    console.print("[dim]No spec context found[/dim]")
+
         # Pre-flight checks (skip for dry-run)
         if not dry_run:
             if not check_gh_available():
@@ -210,7 +234,7 @@ def create(
                     continue
 
             # Create issue
-            issue = task_to_issue(task, copilot_mode=assign_copilot)
+            issue = task_to_issue(task, copilot_mode=assign_copilot, spec_context=spec_context)
             if milestone:
                 issue.milestone = milestone
 

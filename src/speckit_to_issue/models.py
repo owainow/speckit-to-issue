@@ -177,3 +177,94 @@ class ParseResult:
     def incomplete_count(self) -> int:
         """Count of incomplete tasks."""
         return len(self.tasks) - self.complete_count
+
+
+@dataclass
+class SpecContext:
+    """Extracted context from spec folder files.
+
+    Contains summarized content from spec.md, plan.md, research.md,
+    and data-model.md to provide context for issue bodies.
+    """
+
+    # From spec.md
+    feature_overview: str = ""
+    success_criteria: str = ""
+
+    # From plan.md
+    architecture_overview: str = ""
+    target_state: str = ""
+    technical_approach: str = ""
+
+    # From research.md
+    key_decisions: str = ""
+
+    # From data-model.md
+    data_models: str = ""
+
+    # Metadata
+    spec_folder: str = ""
+    files_found: list[str] = field(default_factory=list)
+    files_missing: list[str] = field(default_factory=list)
+    extraction_warnings: list[str] = field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        """Check if any meaningful context was extracted.
+
+        Returns:
+            True if all key content fields are empty.
+        """
+        return not any([
+            self.feature_overview,
+            self.architecture_overview,
+            self.technical_approach,
+        ])
+
+    def has_architecture(self) -> bool:
+        """Check if architecture context is available."""
+        return bool(self.architecture_overview or self.target_state)
+
+    def has_technical(self) -> bool:
+        """Check if technical context is available."""
+        return bool(self.key_decisions or self.technical_approach)
+
+    def to_markdown(self) -> str:
+        """Format extracted context as markdown for issue body.
+
+        Returns:
+            Formatted markdown string with section headers.
+        """
+        sections = []
+
+        # Feature Specification section
+        if self.feature_overview or self.success_criteria:
+            spec_section = "## 📋 Feature Specification\n\n"
+            if self.feature_overview:
+                spec_section += f"### Overview\n\n{self.feature_overview}\n\n"
+            if self.success_criteria:
+                spec_section += f"### Success Criteria\n\n{self.success_criteria}"
+            sections.append(spec_section.strip())
+
+        # Architecture section
+        if self.architecture_overview or self.target_state:
+            arch_section = "## 🏗️ Architecture\n\n"
+            if self.target_state:
+                arch_section += f"### Target State\n\n{self.target_state}\n\n"
+            if self.architecture_overview:
+                arch_section += self.architecture_overview
+            sections.append(arch_section.strip())
+
+        # Technical Context section
+        if self.technical_approach or self.key_decisions:
+            tech_section = "## 🔬 Technical Context\n\n"
+            if self.technical_approach:
+                tech_section += f"{self.technical_approach}\n\n"
+            if self.key_decisions:
+                tech_section += f"### Key Decisions\n\n{self.key_decisions}"
+            sections.append(tech_section.strip())
+
+        # Data Models section
+        if self.data_models:
+            sections.append(f"## 📊 Data Models\n\n{self.data_models}")
+
+        return "\n\n---\n\n".join(sections)
