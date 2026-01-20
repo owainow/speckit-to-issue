@@ -208,7 +208,7 @@ def task_to_issue(
 
     Args:
         task: Task object to convert
-        copilot_mode: If True, use Copilot-optimized body
+        copilot_mode: If True, use Copilot-optimized body and assign to Copilot
         spec_context: Optional spec context to include
 
     Returns:
@@ -218,4 +218,5 @@ def task_to_issue(
         title=task.full_title,
         body=build_issue_body(task, copilot_mode, spec_context),
         labels=get_labels_for_task(task),
+        assignee="copilot" if copilot_mode else None,
     )

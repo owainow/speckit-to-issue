@@ -129,3 +129,10 @@ class TestTaskToIssue:
         assert "## Task:" in standard.body
         assert "## Objective" in copilot.body
         assert "Instructions for Copilot" in copilot.body
+
+    def test_copilot_mode_assigns_to_copilot(self, sample_task: Task) -> None:
+        standard = task_to_issue(sample_task, copilot_mode=False)
+        copilot = task_to_issue(sample_task, copilot_mode=True)
+
+        assert standard.assignee is None
+        assert copilot.assignee == "copilot"
