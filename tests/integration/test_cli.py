@@ -28,18 +28,32 @@ class TestCreateCommand:
     """Tests for create command."""
 
     def test_create_dry_run(self, sample_tasks_md: Path) -> None:
+        """Test default feature-level issue creation."""
         result = runner.invoke(app, ["create", str(sample_tasks_md), "--dry-run"])
 
         assert result.exit_code == 0
         assert "Parsing" in result.stdout
         assert "Dry run" in result.stdout
-        assert "T001" in result.stdout
+        assert "Feature:" in result.stdout  # Feature-level issue
+        assert "Summary" in result.stdout
+
+    def test_create_dry_run_granular(self, sample_tasks_md: Path) -> None:
+        """Test granular task-per-issue creation."""
+        result = runner.invoke(
+            app, ["create", str(sample_tasks_md), "--dry-run", "--granular"]
+        )
+
+        assert result.exit_code == 0
+        assert "Parsing" in result.stdout
+        assert "Dry run" in result.stdout
+        assert "T001" in result.stdout  # Individual task IDs
         assert "Summary" in result.stdout
 
     def test_create_dry_run_skip_complete(self, sample_tasks_md: Path) -> None:
+        """Test skip complete with granular mode."""
         result = runner.invoke(
             app,
-            ["create", str(sample_tasks_md), "--dry-run", "--skip-complete"],
+            ["create", str(sample_tasks_md), "--dry-run", "--skip-complete", "--granular"],
         )
 
         assert result.exit_code == 0
@@ -84,6 +98,7 @@ class TestHelpOutput:
         result = runner.invoke(app, ["create", "--help"])
         assert result.exit_code == 0
         assert "--dry-run" in result.stdout
+        assert "--granular" in result.stdout
         assert "--skip-complete" in result.stdout
         assert "--assign-copilot" in result.stdout
 

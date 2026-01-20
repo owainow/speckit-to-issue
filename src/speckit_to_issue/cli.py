@@ -16,6 +16,7 @@ from .exceptions import (
     RateLimitError,
     RepositoryError,
 )
+from .feature_builder import build_feature_issue
 from .github import (
     check_authenticated,
     check_gh_available,
@@ -76,22 +77,28 @@ def create(
         "-n",
         help="Preview without creating issues",
     ),
+    granular: bool = typer.Option(
+        False,
+        "--granular",
+        "-g",
+        help="Create individual issues per task (default: single feature issue)",
+    ),
     skip_complete: bool = typer.Option(
         False,
         "--skip-complete",
         "-s",
-        help="Skip tasks marked as complete",
+        help="Skip tasks marked as complete (only with --granular)",
     ),
     assign_copilot: bool = typer.Option(
         False,
         "--assign-copilot",
         "-c",
-        help="Format issues for Copilot Coding Agent",
+        help="Format issues for Copilot Coding Agent and assign to Copilot",
     ),
     no_context: bool = typer.Option(
         False,
         "--no-context",
-        help="Disable spec context injection (only with --assign-copilot)",
+        help="Disable spec context injection",
     ),
     force: bool = typer.Option(
         False,
@@ -118,17 +125,21 @@ def create(
         help="Show detailed output",
     ),
 ) -> None:
-    """Create GitHub issues from tasks.md file."""
+    """Create GitHub issues from tasks.md file.
+    
+    By default, creates a single feature issue containing all tasks.
+    Use --granular to create individual issues per task.
+    """
     try:
         # Validate flag combinations
-        if no_context and not assign_copilot:
+        if skip_complete and not granular:
             error_console.print(
-                "[yellow]Warning:[/yellow] --no-context has no effect without --assign-copilot"
+                "[yellow]Warning:[/yellow] --skip-complete only applies with --granular"
             )
 
-        # Read spec context if using copilot mode
+        # Read spec context
         spec_context = None
-        if assign_copilot and not no_context:
+        if not no_context:
             spec_context = read_spec_context(tasks_file)
             if spec_context and not spec_context.is_empty():
                 if verbose:
@@ -185,92 +196,52 @@ def create(
 
         # Ensure labels exist
         if not dry_run:
-            all_labels = get_all_labels_for_tasks(parse_result.tasks)
+            if granular:
+                all_labels = get_all_labels_for_tasks(parse_result.tasks)
+            else:
+                # Feature-level labels
+                all_labels = {"feature", "speckit", f"spec:{parse_result.spec_name}"}
+                if any(t.priority.value == "must" for t in parse_result.tasks):
+                    all_labels.add("priority:high")
+                elif any(t.priority.value == "should" for t in parse_result.tasks):
+                    all_labels.add("priority:medium")
             if verbose:
                 console.print(f"[dim]Ensuring labels: {', '.join(sorted(all_labels))}[/dim]")
             ensure_labels(list(all_labels), repo)
 
-        # Process tasks
+        # Process based on mode
         if dry_run:
             console.print(f"\n🔍 [bold]Dry run[/bold] - no issues will be created\n")
         else:
             console.print(f"\n🚀 Creating issues in [bold]{repo}[/bold]\n")
 
-        summary = CreateSummary(
-            total=task_count,
-            created=0,
-            skipped_exists=0,
-            skipped_complete=0,
-            failed=0,
-            results=[],
-        )
-
-        for task in parse_result.tasks:
-            # Skip complete tasks if requested
-            if skip_complete and task.is_complete:
-                console.print(f"   ⏭️  [{task.id}] {task.title} [dim](complete)[/dim]")
-                summary.skipped_complete += 1
-                summary.results.append(
-                    TaskResult(task=task, result=CreateResult.SKIPPED_COMPLETE)
-                )
-                continue
-
-            # Check if issue already exists
-            if not force:
-                existing = find_existing_issue(task.id, existing_issues)
-                if existing:
-                    console.print(
-                        f"   ⏭️  [{task.id}] {task.title} "
-                        f"[dim](exists: #{existing.number})[/dim]"
-                    )
-                    summary.skipped_exists += 1
-                    summary.results.append(
-                        TaskResult(
-                            task=task,
-                            result=CreateResult.SKIPPED_EXISTS,
-                            issue_url=existing.url,
-                        )
-                    )
-                    continue
-
-            # Create issue
-            issue = task_to_issue(task, copilot_mode=assign_copilot, spec_context=spec_context)
-            if milestone:
-                issue.milestone = milestone
-
-            if dry_run:
-                console.print(f"   ✅ [{task.id}] {task.title} [dim](would create)[/dim]")
-                summary.created += 1
-                summary.results.append(TaskResult(task=task, result=CreateResult.CREATED))
-            else:
-                try:
-                    url = create_issue(issue, repo)
-                    console.print(f"   ✅ [{task.id}] {task.title}")
-                    if verbose:
-                        console.print(f"      [dim]{url}[/dim]")
-                    summary.created += 1
-                    summary.results.append(
-                        TaskResult(task=task, result=CreateResult.CREATED, issue_url=url)
-                    )
-                except GitHubCLIError as e:
-                    console.print(f"   ❌ [{task.id}] {task.title} [red]({e})[/red]")
-                    summary.failed += 1
-                    summary.results.append(
-                        TaskResult(task=task, result=CreateResult.FAILED, error=str(e))
-                    )
-
-        # Summary
-        console.print()
-        table = Table(title="📊 Summary")
-        table.add_column("Status", style="bold")
-        table.add_column("Count", justify="right")
-
-        table.add_row("Created", f"[green]{summary.created}[/green]")
-        table.add_row("Skipped (exists)", f"[yellow]{summary.skipped_exists}[/yellow]")
-        table.add_row("Skipped (complete)", f"[dim]{summary.skipped_complete}[/dim]")
-        table.add_row("Failed", f"[red]{summary.failed}[/red]")
-
-        console.print(table)
+        if granular:
+            # GRANULAR MODE: One issue per task (original behavior)
+            _create_granular_issues(
+                parse_result=parse_result,
+                spec_context=spec_context,
+                existing_issues=existing_issues,
+                assign_copilot=assign_copilot,
+                skip_complete=skip_complete,
+                force=force,
+                dry_run=dry_run,
+                repo=repo,
+                milestone=milestone,
+                verbose=verbose,
+            )
+        else:
+            # FEATURE MODE: Single comprehensive issue (new default)
+            _create_feature_issue(
+                parse_result=parse_result,
+                spec_context=spec_context,
+                existing_issues=existing_issues,
+                assign_copilot=assign_copilot,
+                force=force,
+                dry_run=dry_run,
+                repo=repo,
+                milestone=milestone,
+                verbose=verbose,
+            )
 
     except FileNotFoundError as e:
         error_console.print(f"[red]Error:[/red] {e}")
@@ -293,6 +264,160 @@ def create(
             "Wait a few minutes and try again."
         )
         raise typer.Exit(1)
+
+
+def _create_feature_issue(
+    parse_result,
+    spec_context,
+    existing_issues,
+    assign_copilot: bool,
+    force: bool,
+    dry_run: bool,
+    repo,
+    milestone,
+    verbose: bool,
+) -> None:
+    """Create a single feature-level issue containing all tasks."""
+    # Check if feature issue already exists
+    feature_title_prefix = f"Feature: "
+    if not force:
+        for existing in existing_issues:
+            if existing.title.startswith(feature_title_prefix) and parse_result.spec_name in existing.title.lower().replace(" ", "-"):
+                console.print(
+                    f"   ⏭️  Feature issue already exists: "
+                    f"[dim]#{existing.number}[/dim]"
+                )
+                console.print(f"      {existing.url}")
+                return
+
+    # Build the feature issue
+    issue = build_feature_issue(
+        spec_name=parse_result.spec_name,
+        spec_context=spec_context,
+        tasks=parse_result.tasks,
+        copilot_mode=assign_copilot,
+    )
+    
+    if milestone:
+        issue.milestone = milestone
+
+    if dry_run:
+        console.print(f"   ✅ Would create: [bold]{issue.title}[/bold]")
+        console.print(f"      Tasks: {len(parse_result.tasks)}")
+        console.print(f"      Labels: {', '.join(issue.labels)}")
+        if assign_copilot:
+            console.print(f"      Assignee: copilot")
+    else:
+        try:
+            url = create_issue(issue, repo)
+            console.print(f"   ✅ Created: [bold]{issue.title}[/bold]")
+            console.print(f"      {url}")
+            if verbose:
+                console.print(f"      Tasks: {len(parse_result.tasks)}")
+        except GitHubCLIError as e:
+            console.print(f"   ❌ Failed to create feature issue: [red]{e}[/red]")
+            raise typer.Exit(1)
+
+    # Summary
+    console.print()
+    table = Table(title="📊 Summary")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Feature Issue", "[green]1[/green]" if not dry_run else "[dim]1 (dry run)[/dim]")
+    table.add_row("Tasks Included", str(len(parse_result.tasks)))
+    table.add_row("Phases", str(len(parse_result.phases)))
+    console.print(table)
+
+
+def _create_granular_issues(
+    parse_result,
+    spec_context,
+    existing_issues,
+    assign_copilot: bool,
+    skip_complete: bool,
+    force: bool,
+    dry_run: bool,
+    repo,
+    milestone,
+    verbose: bool,
+) -> None:
+    """Create individual issues per task (original behavior)."""
+    task_count = len(parse_result.tasks)
+    summary = CreateSummary(
+        total=task_count,
+        created=0,
+        skipped_exists=0,
+        skipped_complete=0,
+        failed=0,
+        results=[],
+    )
+
+    for task in parse_result.tasks:
+        # Skip complete tasks if requested
+        if skip_complete and task.is_complete:
+            console.print(f"   ⏭️  [{task.id}] {task.title} [dim](complete)[/dim]")
+            summary.skipped_complete += 1
+            summary.results.append(
+                TaskResult(task=task, result=CreateResult.SKIPPED_COMPLETE)
+            )
+            continue
+
+        # Check if issue already exists
+        if not force:
+            existing = find_existing_issue(task.id, existing_issues)
+            if existing:
+                console.print(
+                    f"   ⏭️  [{task.id}] {task.title} "
+                    f"[dim](exists: #{existing.number})[/dim]"
+                )
+                summary.skipped_exists += 1
+                summary.results.append(
+                    TaskResult(
+                        task=task,
+                        result=CreateResult.SKIPPED_EXISTS,
+                        issue_url=existing.url,
+                    )
+                )
+                continue
+
+        # Create issue
+        issue = task_to_issue(task, copilot_mode=assign_copilot, spec_context=spec_context)
+        if milestone:
+            issue.milestone = milestone
+
+        if dry_run:
+            console.print(f"   ✅ [{task.id}] {task.title} [dim](would create)[/dim]")
+            summary.created += 1
+            summary.results.append(TaskResult(task=task, result=CreateResult.CREATED))
+        else:
+            try:
+                url = create_issue(issue, repo)
+                console.print(f"   ✅ [{task.id}] {task.title}")
+                if verbose:
+                    console.print(f"      [dim]{url}[/dim]")
+                summary.created += 1
+                summary.results.append(
+                    TaskResult(task=task, result=CreateResult.CREATED, issue_url=url)
+                )
+            except GitHubCLIError as e:
+                console.print(f"   ❌ [{task.id}] {task.title} [red]({e})[/red]")
+                summary.failed += 1
+                summary.results.append(
+                    TaskResult(task=task, result=CreateResult.FAILED, error=str(e))
+                )
+
+    # Summary
+    console.print()
+    table = Table(title="📊 Summary")
+    table.add_column("Status", style="bold")
+    table.add_column("Count", justify="right")
+
+    table.add_row("Created", f"[green]{summary.created}[/green]")
+    table.add_row("Skipped (exists)", f"[yellow]{summary.skipped_exists}[/yellow]")
+    table.add_row("Skipped (complete)", f"[dim]{summary.skipped_complete}[/dim]")
+    table.add_row("Failed", f"[red]{summary.failed}[/red]")
+
+    console.print(table)
 
 
 @app.command()

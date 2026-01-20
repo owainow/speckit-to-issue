@@ -157,6 +157,9 @@ def create_issue(issue: Issue, repo: Optional[str] = None) -> str:
     Raises:
         IssueCreationError: If creation fails
     """
+    # Check if we need to assign to Copilot (requires special API handling)
+    assign_to_copilot = issue.assignee == "copilot"
+    
     cmd = [
         "gh", "issue", "create",
         "--title", issue.title,
@@ -166,7 +169,8 @@ def create_issue(issue: Issue, repo: Optional[str] = None) -> str:
     for label in issue.labels:
         cmd.extend(["--label", label])
 
-    if issue.assignee:
+    # Only use --assignee for non-copilot assignees
+    if issue.assignee and not assign_to_copilot:
         cmd.extend(["--assignee", issue.assignee])
 
     if issue.milestone:
@@ -186,9 +190,61 @@ def create_issue(issue: Issue, repo: Optional[str] = None) -> str:
             raise IssueCreationError(f"Failed to create issue: {result.stderr}")
 
         # Output is the issue URL
-        return result.stdout.strip()
+        issue_url = result.stdout.strip()
+        
+        # If we need to assign to Copilot, do it via REST API
+        if assign_to_copilot and issue_url:
+            _assign_issue_to_copilot(issue_url, repo)
+        
+        return issue_url
     except FileNotFoundError:
         raise GitHubCLIError("GitHub CLI (gh) is not installed.")
+
+
+def _assign_issue_to_copilot(issue_url: str, repo: Optional[str] = None) -> bool:
+    """Assign an issue to Copilot coding agent via REST API.
+    
+    The standard gh issue --assignee doesn't work for Copilot.
+    We need to use the REST API with copilot-swe-agent[bot].
+    
+    Args:
+        issue_url: The URL of the issue (e.g., https://github.com/owner/repo/issues/123)
+        repo: Repository in owner/repo format
+        
+    Returns:
+        True if assignment succeeded
+    """
+    import re
+    
+    # Extract issue number from URL
+    match = re.search(r'/issues/(\d+)$', issue_url)
+    if not match:
+        return False
+    
+    issue_number = match.group(1)
+    
+    # Determine repo from URL if not provided
+    if not repo:
+        repo_match = re.search(r'github\.com/([^/]+/[^/]+)/issues', issue_url)
+        if repo_match:
+            repo = repo_match.group(1)
+        else:
+            return False
+    
+    cmd = [
+        "gh", "api",
+        "--method", "POST",
+        "-H", "Accept: application/vnd.github+json",
+        "-H", "X-GitHub-Api-Version: 2022-11-28",
+        f"/repos/{repo}/issues/{issue_number}/assignees",
+        "-f", "assignees[]=copilot-swe-agent[bot]",
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
 
 def ensure_label_exists(label: str, color: str, repo: Optional[str] = None) -> bool:
