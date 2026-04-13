@@ -11,7 +11,7 @@ from typing import Optional
 from .models import SpecContext
 
 # Spec files to look for in the spec folder
-SPEC_FILES = ["spec.md", "plan.md", "research.md", "data-model.md"]
+SPEC_FILES = ["spec.md", "plan.md", "research.md", "data-model.md", "quickstart.md"]
 
 # Maximum lines per section (for truncation)
 MAX_LINES = {
@@ -235,6 +235,56 @@ def extract_from_data_model(data_model_path: Path) -> dict[str, str]:
     return result
 
 
+def discover_constitution(tasks_file: Path) -> Optional[Path]:
+    """Discover the project constitution file.
+
+    Searches in order:
+    1. Same folder as tasks.md: constitution.md
+    2. Parent folder: constitution.md
+    3. Walk up looking for specs/constitution.md
+
+    Args:
+        tasks_file: Path to the tasks.md file
+
+    Returns:
+        Path to constitution.md if found, None otherwise
+    """
+    folder = tasks_file.parent
+
+    # Check same folder
+    candidate = folder / "constitution.md"
+    if candidate.exists():
+        return candidate
+
+    # Check parent folder
+    candidate = folder.parent / "constitution.md"
+    if candidate.exists():
+        return candidate
+
+    # Walk up looking for specs/constitution.md
+    current = folder
+    for _ in range(10):  # Limit traversal depth
+        specs_const = current / "specs" / "constitution.md"
+        if specs_const.exists():
+            return specs_const
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+
+    return None
+
+
+def _read_raw_file(path: Optional[Path]) -> str:
+    """Read the full content of a file, returning empty string on failure."""
+    if path is None or not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
 def read_spec_context(tasks_file: Path) -> SpecContext:
     """Read and extract context from spec folder files.
 
@@ -255,6 +305,22 @@ def read_spec_context(tasks_file: Path) -> SpecContext:
     files = discover_spec_files(tasks_file)
     context.files_found = [k for k, v in files.items() if v is not None]
     context.files_missing = [k for k, v in files.items() if v is None]
+
+    # Read raw file contents for verbose output
+    context.raw_spec = _read_raw_file(files.get("spec.md"))
+    context.raw_plan = _read_raw_file(files.get("plan.md"))
+    context.raw_tasks = _read_raw_file(tasks_file if tasks_file.exists() else None)
+    context.raw_research = _read_raw_file(files.get("research.md"))
+    context.raw_data_model = _read_raw_file(files.get("data-model.md"))
+    context.raw_quickstart = _read_raw_file(files.get("quickstart.md"))
+
+    # Discover and read constitution
+    constitution_path = discover_constitution(tasks_file)
+    if constitution_path:
+        context.raw_constitution = _read_raw_file(constitution_path)
+        context.files_found.append("constitution.md")
+    else:
+        context.files_missing.append("constitution.md")
 
     # Extract from spec.md
     if files.get("spec.md"):

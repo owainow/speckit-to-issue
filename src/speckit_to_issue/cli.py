@@ -296,6 +296,7 @@ def _create_feature_issue(
         spec_context=spec_context,
         tasks=parse_result.tasks,
         copilot_mode=assign_copilot,
+        feature_title=parse_result.feature_title,
     )
     
     if milestone:

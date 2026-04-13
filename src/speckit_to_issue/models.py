@@ -43,6 +43,7 @@ class Task:
     spec_name: str = ""  # e.g., "002-weather-frontend"
     acceptance_criteria: list[str] = field(default_factory=list)
     is_complete: bool = False  # True if ✅ or all criteria checked
+    markers: list[str] = field(default_factory=list)  # e.g., ["P", "US1"]
 
     @property
     def full_title(self) -> str:
@@ -164,6 +165,7 @@ class ParseResult:
     """Result of parsing a tasks.md file."""
 
     spec_name: str  # Extracted from file path
+    feature_title: str = ""  # Extracted from "# Tasks: Title" header
     tasks: list[Task] = field(default_factory=list)  # All parsed tasks
     phases: list[str] = field(default_factory=list)  # List of phase names
     errors: list[str] = field(default_factory=list)  # Parse warnings
@@ -202,6 +204,15 @@ class SpecContext:
     # From data-model.md
     data_models: str = ""
 
+    # Raw file contents for verbose issue output
+    raw_spec: str = ""
+    raw_plan: str = ""
+    raw_tasks: str = ""
+    raw_constitution: str = ""
+    raw_research: str = ""
+    raw_data_model: str = ""
+    raw_quickstart: str = ""
+
     # Metadata
     spec_folder: str = ""
     files_found: list[str] = field(default_factory=list)
@@ -212,12 +223,16 @@ class SpecContext:
         """Check if any meaningful context was extracted.
 
         Returns:
-            True if all key content fields are empty.
+            True if all key content fields (both extracted and raw) are empty.
+            Note: raw_tasks is excluded because it is always the input file.
         """
         return not any([
             self.feature_overview,
             self.architecture_overview,
             self.technical_approach,
+            self.raw_spec,
+            self.raw_plan,
+            self.raw_constitution,
         ])
 
     def has_architecture(self) -> bool:

@@ -8,7 +8,7 @@ from speckit_to_issue.exceptions import ParseError
 from speckit_to_issue.models import Priority
 from speckit_to_issue.parser import (
     extract_spec_name,
-    parse_task_block,
+    _parse_old_task_block as parse_task_block,
     parse_tasks_file,
 )
 
