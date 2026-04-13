@@ -4,9 +4,11 @@ Convert speckit `tasks.md` files to GitHub issues for AI SDLC workflows.
 
 ## Features
 
-- 📋 Parse speckit `tasks.md` files into structured tasks
+- 📋 Parse speckit `tasks.md` files into structured tasks (both new checklist and legacy formats)
 - 🔄 Create GitHub issues with proper labels and formatting
 - 🤖 Copilot Coding Agent optimized issue templates
+- 🔌 **MCP Server** — use from GitHub Copilot, Claude, or any MCP-compatible agent
+- 📚 Verbose issue output — embeds full spec, plan, tasks, research, data model, and constitution
 - ✅ Skip completed tasks automatically
 - 🔍 Detect existing issues to avoid duplicates
 - 📊 Sync status between tasks and issues
@@ -25,7 +27,65 @@ pip install -e .
 - Python 3.11+
 - [GitHub CLI (gh)](https://cli.github.com) installed and authenticated
 
-## Usage
+## Quick Start — MCP Server (Recommended)
+
+The fastest way to use speckit-to-issue is as an **MCP server**. This lets your AI coding agent (GitHub Copilot, Claude, etc.) create issues directly — no CLI commands needed.
+
+### 1. Install
+
+```bash
+pip install -e .
+```
+
+### 2. Configure your editor
+
+Add to your MCP configuration:
+
+**VS Code** (`.vscode/mcp.json` or User Settings):
+
+```json
+{
+  "servers": {
+    "speckit-to-issue": {
+      "command": "python",
+      "args": ["-m", "speckit_to_issue.mcp_server"]
+    }
+  }
+}
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "speckit-to-issue": {
+      "command": "python",
+      "args": ["-m", "speckit_to_issue.mcp_server"]
+    }
+  }
+}
+```
+
+### 3. Use it
+
+Once configured, your agent has access to three tools:
+
+| Tool | Description |
+|------|-------------|
+| `create_feature_issue` | Create a GitHub issue from a spec folder (reads all spec files, creates verbose issue) |
+| `preview_feature_issue` | Preview the issue without creating it |
+| `list_spec_folders` | Discover spec folders in a workspace |
+
+Just ask your agent:
+
+> "Create a GitHub issue from the spec in `specs/010-5day-forecast/` and assign it to Copilot"
+
+The tool reads `tasks.md`, `spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, and the project `constitution.md`, then creates a comprehensive issue with all context embedded in collapsible sections.
+
+---
+
+## CLI Usage
 
 ### Create issues from tasks
 
@@ -81,7 +141,29 @@ speckit-to-issue --version
 
 ## Tasks.md Format
 
-The parser expects tasks in this format:
+The parser auto-detects two formats:
+
+### New format (checklist style)
+
+```markdown
+# Tasks: 5-Day Weather Forecast
+
+## Phase 1: Setup (Shared Infrastructure)
+
+- [ ] T001 Add cache TTL setting in src/infrastructure/config.py
+- [ ] T002 [P] Generalize CachePort value type in src/application/interfaces.py
+
+## Phase 2: Core Feature (Priority: P1) 🎯 MVP
+
+- [ ] T003 [US1] Add forecast HTML structure in static/index.html
+- [x] T004 [US1] Add fetchForecast() function in static/index.html
+```
+
+- `[P]`, `[US1]` etc. are optional inline markers
+- File paths are extracted from trailing `in path/to/file.ext`
+- Phase-level priority (`Priority: P1`) maps to task priority
+
+### Legacy format (header style)
 
 ```markdown
 ## Phase 1: Setup
