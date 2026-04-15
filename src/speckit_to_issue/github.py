@@ -1,7 +1,11 @@
 """GitHub CLI wrapper for issue operations."""
 
 import json
+import os
+import platform
+import shutil
 import subprocess
+import tempfile
 from typing import Optional
 
 from .exceptions import (
@@ -13,6 +17,68 @@ from .exceptions import (
 )
 from .models import ExistingIssue, Issue
 
+# Cached resolved path to gh executable
+_gh_path: Optional[str] = None
+
+
+def _resolve_gh() -> Optional[str]:
+    """Resolve the full path to the gh CLI executable.
+
+    Checks shutil.which first, then falls back to common installation
+    directories (useful when the process PATH is incomplete, e.g. when
+    spawned as an MCP server by VS Code).
+
+    Returns:
+        Absolute path to gh executable, or None if not found.
+    """
+    global _gh_path
+    if _gh_path is not None:
+        return _gh_path
+
+    # 1. Standard PATH lookup
+    found = shutil.which("gh")
+    if found:
+        _gh_path = found
+        return _gh_path
+
+    # 2. Check common install locations by platform
+    candidates: list[str] = []
+    system = platform.system()
+    if system == "Windows":
+        for pf in [
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs"),
+        ]:
+            if pf:
+                candidates.append(os.path.join(pf, "GitHub CLI", "gh.exe"))
+        # Also check scoop / winget common locations
+        userprofile = os.environ.get("USERPROFILE", "")
+        if userprofile:
+            candidates.append(os.path.join(userprofile, "scoop", "shims", "gh.exe"))
+    elif system == "Darwin":
+        candidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
+    else:  # Linux
+        candidates = ["/usr/bin/gh", "/usr/local/bin/gh", "/snap/bin/gh"]
+
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            _gh_path = candidate
+            return _gh_path
+
+    return None
+
+
+def _gh() -> str:
+    """Return the path to gh, raising if not found."""
+    path = _resolve_gh()
+    if path is None:
+        raise GitHubCLIError(
+            "GitHub CLI (gh) is not installed or not on PATH. "
+            "Install from https://cli.github.com"
+        )
+    return path
+
 
 def check_gh_available() -> bool:
     """Check if gh CLI is installed.
@@ -22,13 +88,13 @@ def check_gh_available() -> bool:
     """
     try:
         result = subprocess.run(
-            ["gh", "--version"],
+            [_gh(), "--version"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         return result.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, GitHubCLIError):
         return False
     except subprocess.TimeoutExpired:
         return False
@@ -45,7 +111,7 @@ def check_authenticated() -> bool:
     """
     try:
         result = subprocess.run(
-            ["gh", "auth", "status"],
+            [_gh(), "auth", "status"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -70,7 +136,7 @@ def get_current_repo() -> str:
     """
     try:
         result = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            [_gh(), "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -96,7 +162,7 @@ def list_issues(repo: Optional[str] = None, limit: int = 1000) -> list[ExistingI
         List of ExistingIssue objects
     """
     cmd = [
-        "gh", "issue", "list",
+        _gh(), "issue", "list",
         "--json", "number,title,state,url",
         "--limit", str(limit),
         "--state", "all",
@@ -160,45 +226,57 @@ def create_issue(issue: Issue, repo: Optional[str] = None) -> str:
     # Check if we need to assign to Copilot (requires special API handling)
     assign_to_copilot = issue.assignee == "copilot"
     
-    cmd = [
-        "gh", "issue", "create",
-        "--title", issue.title,
-        "--body", issue.body,
-    ]
-
-    for label in issue.labels:
-        cmd.extend(["--label", label])
-
-    # Only use --assignee for non-copilot assignees
-    if issue.assignee and not assign_to_copilot:
-        cmd.extend(["--assignee", issue.assignee])
-
-    if issue.milestone:
-        cmd.extend(["--milestone", issue.milestone])
-
-    if repo:
-        cmd.extend(["--repo", repo])
-
+    # Use --body-file with a temp file instead of --body to avoid hitting
+    # the Windows CreateProcess command-line limit (~32,767 chars).
+    # subprocess.run raises a misleading FileNotFoundError when exceeded.
+    body_file = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    )
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            stderr = result.stderr.lower()
-            if "rate limit" in stderr:
-                raise RateLimitError("GitHub API rate limit exceeded.")
-            if "not found" in stderr or "could not resolve" in stderr:
-                raise RepositoryError(f"Repository not found: {repo}")
-            raise IssueCreationError(f"Failed to create issue: {result.stderr}")
+        body_file.write(issue.body)
+        body_file.close()
 
-        # Output is the issue URL
-        issue_url = result.stdout.strip()
-        
-        # If we need to assign to Copilot, do it via REST API
-        if assign_to_copilot and issue_url:
-            _assign_issue_to_copilot(issue_url, repo)
-        
-        return issue_url
-    except FileNotFoundError:
-        raise GitHubCLIError("GitHub CLI (gh) is not installed.")
+        cmd = [
+            _gh(), "issue", "create",
+            "--title", issue.title,
+            "--body-file", body_file.name,
+        ]
+
+        for label in issue.labels:
+            cmd.extend(["--label", label])
+
+        # Only use --assignee for non-copilot assignees
+        if issue.assignee and not assign_to_copilot:
+            cmd.extend(["--assignee", issue.assignee])
+
+        if issue.milestone:
+            cmd.extend(["--milestone", issue.milestone])
+
+        if repo:
+            cmd.extend(["--repo", repo])
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                stderr = result.stderr.lower()
+                if "rate limit" in stderr:
+                    raise RateLimitError("GitHub API rate limit exceeded.")
+                if "not found" in stderr or "could not resolve" in stderr:
+                    raise RepositoryError(f"Repository not found: {repo}")
+                raise IssueCreationError(f"Failed to create issue: {result.stderr}")
+
+            # Output is the issue URL
+            issue_url = result.stdout.strip()
+            
+            # If we need to assign to Copilot, do it via REST API
+            if assign_to_copilot and issue_url:
+                _assign_issue_to_copilot(issue_url, repo)
+            
+            return issue_url
+        except FileNotFoundError:
+            raise GitHubCLIError("GitHub CLI (gh) is not installed.")
+    finally:
+        os.unlink(body_file.name)
 
 
 def _assign_issue_to_copilot(issue_url: str, repo: Optional[str] = None) -> bool:
@@ -232,7 +310,7 @@ def _assign_issue_to_copilot(issue_url: str, repo: Optional[str] = None) -> bool
             return False
     
     cmd = [
-        "gh", "api",
+        _gh(), "api",
         "--method", "POST",
         "-H", "Accept: application/vnd.github+json",
         "-H", "X-GitHub-Api-Version: 2022-11-28",
@@ -258,7 +336,7 @@ def ensure_label_exists(label: str, color: str, repo: Optional[str] = None) -> b
     Returns:
         True if label exists or was created
     """
-    cmd = ["gh", "label", "create", label, "--color", color, "--force"]
+    cmd = [_gh(), "label", "create", label, "--color", color, "--force"]
     if repo:
         cmd.extend(["--repo", repo])
 
